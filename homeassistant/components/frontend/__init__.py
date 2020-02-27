@@ -50,8 +50,8 @@ MANIFEST_JSON = {
     "display": "standalone",
     "icons": [
         {
-            "src": "/static/icons/favicon-{size}x{size}.png".format(size=size),
-            "sizes": "{size}x{size}".format(size=size),
+            "src": f"/static/icons/favicon-{size}x{size}.png",
+            "sizes": f"{size}x{size}",
             "type": "image/png",
             "purpose": "maskable any",
         }
@@ -185,7 +185,7 @@ def async_register_built_in_panel(
     panels = hass.data.setdefault(DATA_PANELS, {})
 
     if panel.frontend_url_path in panels:
-        _LOGGER.warning("Overwriting integration %s", panel.frontend_url_path)
+        raise ValueError(f"Overwriting panel {panel.frontend_url_path}")
 
     panels[panel.frontend_url_path] = panel
 
