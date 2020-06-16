@@ -2,11 +2,8 @@
 import asyncio
 from datetime import timedelta
 from distutils.version import StrictVersion
-import json
 import logging
-import uuid
 
-import aiohttp
 import async_timeout
 from distro import linux_distribution  # pylint: disable=import-error
 import voluptuous as vol
@@ -27,7 +24,6 @@ CONF_COMPONENT_REPORTING = "include_used_components"
 DOMAIN = "updater"
 
 UPDATER_URL = "https://updater.home-assistant.io/"
-UPDATER_UUID_FILE = ".uuid"
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -54,26 +50,6 @@ class Updater:
         self.newest_version = newest_version
 
 
-def _create_uuid(hass, filename=UPDATER_UUID_FILE):
-    """Create UUID and save it in a file."""
-    with open(hass.config.path(filename), "w") as fptr:
-        _uuid = uuid.uuid4().hex
-        fptr.write(json.dumps({"uuid": _uuid}))
-        return _uuid
-
-
-def _load_uuid(hass, filename=UPDATER_UUID_FILE):
-    """Load UUID from a file or return None."""
-    try:
-        with open(hass.config.path(filename)) as fptr:
-            jsonf = json.loads(fptr.read())
-            return uuid.UUID(jsonf["uuid"], version=4).hex
-    except (ValueError, AttributeError):
-        return None
-    except FileNotFoundError:
-        return _create_uuid(hass, filename)
-
-
 async def async_setup(hass, config):
     """Set up the updater component."""
     if "dev" in current_version:
@@ -82,7 +58,7 @@ async def async_setup(hass, config):
 
     conf = config.get(DOMAIN, {})
     if conf.get(CONF_REPORTING):
-        huuid = await hass.async_add_job(_load_uuid, hass)
+        huuid = await hass.helpers.instance_id.async_get()
     else:
         huuid = None
 
@@ -130,7 +106,8 @@ async def async_setup(hass, config):
         update_interval=timedelta(days=1),
     )
 
-    await coordinator.async_refresh()
+    # This can take up to 15s which can delay startup
+    asyncio.create_task(coordinator.async_refresh())
 
     hass.async_create_task(
         discovery.async_load_platform(hass, "binary_sensor", DOMAIN, {}, config)
@@ -156,29 +133,27 @@ async def get_newest_version(hass, huuid, include_components):
         info_object = {}
 
     session = async_get_clientsession(hass)
-    try:
-        with async_timeout.timeout(5):
-            req = await session.post(UPDATER_URL, json=info_object)
-        _LOGGER.info(
-            (
-                "Submitted analytics to Home Assistant servers. "
-                "Information submitted includes %s"
-            ),
-            info_object,
-        )
-    except (asyncio.TimeoutError, aiohttp.ClientError):
-        _LOGGER.error("Could not contact Home Assistant Update to check for updates")
-        raise update_coordinator.UpdateFailed
+
+    with async_timeout.timeout(15):
+        req = await session.post(UPDATER_URL, json=info_object)
+
+    _LOGGER.info(
+        (
+            "Submitted analytics to Home Assistant servers. "
+            "Information submitted includes %s"
+        ),
+        info_object,
+    )
 
     try:
         res = await req.json()
     except ValueError:
-        _LOGGER.error("Received invalid JSON from Home Assistant Update")
-        raise update_coordinator.UpdateFailed
+        raise update_coordinator.UpdateFailed(
+            "Received invalid JSON from Home Assistant Update"
+        )
 
     try:
         res = RESPONSE_SCHEMA(res)
         return res["version"], res["release-notes"]
-    except vol.Invalid:
-        _LOGGER.error("Got unexpected response: %s", res)
-        raise update_coordinator.UpdateFailed
+    except vol.Invalid as err:
+        raise update_coordinator.UpdateFailed(f"Got unexpected response: {err}")

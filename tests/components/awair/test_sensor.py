@@ -4,7 +4,6 @@ from contextlib import contextmanager
 from datetime import timedelta
 import json
 import logging
-from unittest.mock import patch
 
 from homeassistant.components.awair.sensor import (
     ATTR_LAST_API_UPDATE,
@@ -23,11 +22,13 @@ from homeassistant.const import (
     DEVICE_CLASS_TEMPERATURE,
     STATE_UNAVAILABLE,
     TEMP_CELSIUS,
+    UNIT_PERCENTAGE,
 )
 from homeassistant.setup import async_setup_component
 from homeassistant.util.dt import parse_datetime, utcnow
 
-from tests.common import async_fire_time_changed, load_fixture, mock_coro
+from tests.async_mock import patch
+from tests.common import async_fire_time_changed, load_fixture
 
 DISCOVERY_CONFIG = {"sensor": {"platform": "awair", "access_token": "qwerty"}}
 
@@ -67,9 +68,9 @@ def alter_time(retval):
 async def setup_awair(hass, config=None, data_fixture=AIR_DATA_FIXTURE):
     """Load the Awair platform."""
     devices_json = json.loads(load_fixture("awair_devices.json"))
-    devices_mock = mock_coro(devices_json)
+    devices_mock = devices_json
     devices_patch = patch("python_awair.AwairClient.devices", return_value=devices_mock)
-    air_data_mock = mock_coro(data_fixture)
+    air_data_mock = data_fixture
     air_data_patch = patch(
         "python_awair.AwairClient.air_data_latest", return_value=air_data_mock
     )
@@ -156,7 +157,7 @@ async def test_awair_score(hass):
     sensor = hass.states.get("sensor.awair_score")
     assert sensor.state == "78"
     assert sensor.attributes["device_class"] == DEVICE_CLASS_SCORE
-    assert sensor.attributes["unit_of_measurement"] == "%"
+    assert sensor.attributes["unit_of_measurement"] == UNIT_PERCENTAGE
 
 
 async def test_awair_temp(hass):
@@ -176,7 +177,7 @@ async def test_awair_humid(hass):
     sensor = hass.states.get("sensor.awair_humidity")
     assert sensor.state == "32.7"
     assert sensor.attributes["device_class"] == DEVICE_CLASS_HUMIDITY
-    assert sensor.attributes["unit_of_measurement"] == "%"
+    assert sensor.attributes["unit_of_measurement"] == UNIT_PERCENTAGE
 
 
 async def test_awair_co2(hass):
@@ -232,8 +233,7 @@ async def test_availability(hass):
 
     future = NOW + timedelta(minutes=30)
     data_patch = patch(
-        "python_awair.AwairClient.air_data_latest",
-        return_value=mock_coro(AIR_DATA_FIXTURE),
+        "python_awair.AwairClient.air_data_latest", return_value=AIR_DATA_FIXTURE,
     )
 
     with data_patch, alter_time(future):
@@ -245,9 +245,7 @@ async def test_availability(hass):
     future = NOW + timedelta(hours=1)
     fixture = AIR_DATA_FIXTURE_UPDATED
     fixture[0][ATTR_TIMESTAMP] = str(future)
-    data_patch = patch(
-        "python_awair.AwairClient.air_data_latest", return_value=mock_coro(fixture)
-    )
+    data_patch = patch("python_awair.AwairClient.air_data_latest", return_value=fixture)
 
     with data_patch, alter_time(future):
         async_fire_time_changed(hass, future)
@@ -257,9 +255,7 @@ async def test_availability(hass):
 
     future = NOW + timedelta(minutes=90)
     fixture = AIR_DATA_FIXTURE_EMPTY
-    data_patch = patch(
-        "python_awair.AwairClient.air_data_latest", return_value=mock_coro(fixture)
-    )
+    data_patch = patch("python_awair.AwairClient.air_data_latest", return_value=fixture)
 
     with data_patch, alter_time(future):
         async_fire_time_changed(hass, future)
@@ -275,7 +271,7 @@ async def test_async_update(hass):
     future = NOW + timedelta(minutes=10)
     data_patch = patch(
         "python_awair.AwairClient.air_data_latest",
-        return_value=mock_coro(AIR_DATA_FIXTURE_UPDATED),
+        return_value=AIR_DATA_FIXTURE_UPDATED,
     )
 
     with data_patch, alter_time(future):
@@ -299,7 +295,7 @@ async def test_throttle_async_update(hass):
     future = NOW + timedelta(minutes=1)
     data_patch = patch(
         "python_awair.AwairClient.air_data_latest",
-        return_value=mock_coro(AIR_DATA_FIXTURE_UPDATED),
+        return_value=AIR_DATA_FIXTURE_UPDATED,
     )
 
     with data_patch, alter_time(future):

@@ -2,7 +2,15 @@
 from datetime import timedelta
 import logging
 
-from homeassistant.const import ENERGY_KILO_WATT_HOUR, POWER_WATT, VOLUME_CUBIC_METERS
+from homeassistant.const import (
+    DEGREE,
+    ELECTRICAL_CURRENT_AMPERE,
+    ENERGY_KILO_WATT_HOUR,
+    POWER_WATT,
+    UNIT_PERCENTAGE,
+    VOLT,
+    VOLUME_CUBIC_METERS,
+)
 from homeassistant.helpers.entity import Entity
 
 from . import DATA_SMAPPEE
@@ -19,9 +27,15 @@ SENSOR_TYPES = {
         POWER_WATT,
         "active_power",
     ],
-    "current": ["Current", "mdi:gauge", "local", "A", "current"],
-    "voltage": ["Voltage", "mdi:gauge", "local", "V", "voltage"],
-    "active_cosfi": ["Power Factor", "mdi:gauge", "local", "%", "active_cosfi"],
+    "current": ["Current", "mdi:gauge", "local", ELECTRICAL_CURRENT_AMPERE, "current"],
+    "voltage": ["Voltage", "mdi:gauge", "local", VOLT, "voltage"],
+    "active_cosfi": [
+        "Power Factor",
+        "mdi:gauge",
+        "local",
+        UNIT_PERCENTAGE,
+        "active_cosfi",
+    ],
     "alwayson_today": [
         "Always On Today",
         "mdi:gauge",
@@ -61,21 +75,21 @@ SENSOR_TYPES = {
         "Water Sensor Temperature",
         "mdi:temperature-celsius",
         "water",
-        "°",
+        DEGREE,
         "temperature",
     ],
     "water_sensor_humidity": [
         "Water Sensor Humidity",
         "mdi:water-percent",
         "water",
-        "%",
+        UNIT_PERCENTAGE,
         "humidity",
     ],
     "water_sensor_battery": [
         "Water Sensor Battery",
         "mdi:battery",
         "water",
-        "%",
+        UNIT_PERCENTAGE,
         "battery",
     ],
 }

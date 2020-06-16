@@ -17,6 +17,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     ACTIVE_UPDATE_RATE,
@@ -24,11 +25,15 @@ from .const import (
     DOMAIN,
     SENSE_DATA,
     SENSE_DEVICE_UPDATE,
+    SENSE_DEVICES_DATA,
+    SENSE_DISCOVERED_DEVICES_DATA,
+    SENSE_TIMEOUT_EXCEPTIONS,
+    SENSE_TRENDS_COORDINATOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "binary_sensor"]
+PLATFORMS = ["binary_sensor", "sensor"]
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -42,6 +47,24 @@ CONFIG_SCHEMA = vol.Schema(
     },
     extra=vol.ALLOW_EXTRA,
 )
+
+
+class SenseDevicesData:
+    """Data for each sense device."""
+
+    def __init__(self):
+        """Create."""
+        self._data_by_device = {}
+
+    def set_devices_data(self, devices):
+        """Store a device update."""
+        self._data_by_device = {}
+        for device in devices:
+            self._data_by_device[device["id"]] = device
+
+    def get_device_by_id(self, sense_device_id):
+        """Get the latest device data."""
+        return self._data_by_device.get(sense_device_id)
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -58,7 +81,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             data={
                 CONF_EMAIL: conf[CONF_EMAIL],
                 CONF_PASSWORD: conf[CONF_PASSWORD],
-                CONF_TIMEOUT: conf.get[CONF_TIMEOUT],
+                CONF_TIMEOUT: conf[CONF_TIMEOUT],
             },
         )
     )
@@ -81,26 +104,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     except SenseAuthenticationException:
         _LOGGER.error("Could not authenticate with sense server")
         return False
-    except SenseAPITimeoutException:
+    except SENSE_TIMEOUT_EXCEPTIONS:
         raise ConfigEntryNotReady
 
-    hass.data[DOMAIN][entry.entry_id] = {SENSE_DATA: gateway}
+    sense_devices_data = SenseDevicesData()
+    try:
+        sense_discovered_devices = await gateway.get_discovered_device_data()
+    except SENSE_TIMEOUT_EXCEPTIONS:
+        raise ConfigEntryNotReady
+
+    trends_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        name=f"Sense Trends {email}",
+        update_method=gateway.update_trend_data,
+        update_interval=timedelta(seconds=300),
+    )
+
+    # This can take longer than 60s and we already know
+    # sense is online since get_discovered_device_data was
+    # successful so we do it later.
+    hass.loop.create_task(trends_coordinator.async_request_refresh())
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        SENSE_DATA: gateway,
+        SENSE_DEVICES_DATA: sense_devices_data,
+        SENSE_TRENDS_COORDINATOR: trends_coordinator,
+        SENSE_DISCOVERED_DEVICES_DATA: sense_discovered_devices,
+    }
 
     for component in PLATFORMS:
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, component)
         )
 
-    async def async_sense_update(now):
+    async def async_sense_update(_):
         """Retrieve latest state."""
         try:
-            gateway = hass.data[DOMAIN][entry.entry_id][SENSE_DATA]
             await gateway.update_realtime()
-            async_dispatcher_send(
-                hass, f"{SENSE_DEVICE_UPDATE}-{gateway.sense_monitor_id}"
-            )
         except SenseAPITimeoutException:
             _LOGGER.error("Timeout retrieving data")
+
+        data = gateway.get_realtime()
+        if "devices" in data:
+            sense_devices_data.set_devices_data(data["devices"])
+        async_dispatcher_send(hass, f"{SENSE_DEVICE_UPDATE}-{gateway.sense_monitor_id}")
 
     hass.data[DOMAIN][entry.entry_id][
         "track_time_remove_callback"

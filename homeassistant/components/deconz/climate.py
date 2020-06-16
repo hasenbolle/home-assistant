@@ -1,7 +1,7 @@
 """Support for deCONZ climate devices."""
 from pydeconz.sensor import Thermostat
 
-from homeassistant.components.climate import ClimateDevice
+from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
     HVAC_MODE_AUTO,
     HVAC_MODE_HEAT,
@@ -44,7 +44,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     gateway.option_allow_clip_sensor
                     or not sensor.type.startswith("CLIP")
                 )
-                and sensor.deconz_id not in gateway.deconz_ids.values()
             ):
                 entities.append(DeconzThermostat(sensor, gateway))
 
@@ -59,7 +58,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_climate(gateway.api.sensors.values())
 
 
-class DeconzThermostat(DeconzDevice, ClimateDevice):
+class DeconzThermostat(DeconzDevice, ClimateEntity):
     """Representation of a deCONZ thermostat."""
 
     @property

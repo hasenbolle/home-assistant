@@ -2,7 +2,7 @@
 from datetime import timedelta
 import logging
 
-from homeassistant.const import ATTR_BATTERY_LEVEL, TEMP_CELSIUS
+from homeassistant.const import ATTR_BATTERY_LEVEL, TEMP_CELSIUS, UNIT_PERCENTAGE
 from homeassistant.helpers.entity import Entity
 
 from . import DOMAIN as TAHOMA_DOMAIN, TahomaDevice
@@ -51,11 +51,18 @@ class TahomaSensor(TahomaDevice, Entity):
         if self.tahoma_device.type == "io:LightIOSystemSensor":
             return "lx"
         if self.tahoma_device.type == "Humidity Sensor":
-            return "%"
+            return UNIT_PERCENTAGE
         if self.tahoma_device.type == "rtds:RTDSContactSensor":
             return None
         if self.tahoma_device.type == "rtds:RTDSMotionSensor":
             return None
+        if (
+            self.tahoma_device.type
+            == "somfythermostat:SomfyThermostatTemperatureSensor"
+        ):
+            return TEMP_CELSIUS
+        if self.tahoma_device.type == "somfythermostat:SomfyThermostatHumiditySensor":
+            return UNIT_PERCENTAGE
 
     def update(self):
         """Update the state."""
@@ -84,6 +91,19 @@ class TahomaSensor(TahomaDevice, Entity):
         if self.tahoma_device.type == "io:TemperatureIOSystemSensor":
             self.current_value = round(
                 float(self.tahoma_device.active_states["core:TemperatureState"]), 1
+            )
+            self._available = True
+        if (
+            self.tahoma_device.type
+            == "somfythermostat:SomfyThermostatTemperatureSensor"
+        ):
+            self.current_value = float(
+                f"{self.tahoma_device.active_states['core:TemperatureState']:.2f}"
+            )
+            self._available = True
+        if self.tahoma_device.type == "somfythermostat:SomfyThermostatHumiditySensor":
+            self.current_value = float(
+                f"{self.tahoma_device.active_states['core:RelativeHumidityState']:.2f}"
             )
             self._available = True
 

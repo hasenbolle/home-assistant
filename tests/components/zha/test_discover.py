@@ -5,9 +5,11 @@ from unittest import mock
 
 import pytest
 import zigpy.quirks
+import zigpy.types
 import zigpy.zcl.clusters.closures
 import zigpy.zcl.clusters.general
 import zigpy.zcl.clusters.security
+import zigpy.zcl.foundation as zcl_f
 
 import homeassistant.components.zha.binary_sensor
 import homeassistant.components.zha.core.channels as zha_channels
@@ -26,6 +28,8 @@ import homeassistant.helpers.entity_registry
 
 from .common import get_zha_gateway
 from .zha_devices_list import DEVICES
+
+from tests.async_mock import AsyncMock, patch
 
 NO_TAIL_ID = re.compile("_\\d$")
 
@@ -48,6 +52,10 @@ def channels_mock(zha_device_mock):
     return _mock
 
 
+@patch(
+    "zigpy.zcl.clusters.general.Identify.request",
+    new=AsyncMock(return_value=[mock.sentinel.data, zcl_f.Status.SUCCESS]),
+)
 @pytest.mark.parametrize("device", DEVICES)
 async def test_devices(
     device, hass, zigpy_device_mock, monkeypatch, zha_device_joined_restored
@@ -66,6 +74,10 @@ async def test_devices(
         node_descriptor=device["node_descriptor"],
     )
 
+    cluster_identify = _get_first_identify_cluster(zigpy_device)
+    if cluster_identify:
+        cluster_identify.request.reset_mock()
+
     orig_new_entity = zha_channels.ChannelPool.async_new_entity
     _dispatch = mock.MagicMock(wraps=orig_new_entity)
     try:
@@ -81,18 +93,30 @@ async def test_devices(
         ent for ent in entity_ids if ent.split(".")[0] in zha_const.COMPONENTS
     }
 
+    if cluster_identify:
+        called = int(zha_device_joined_restored.name == "zha_device_joined")
+        assert cluster_identify.request.call_count == called
+        assert cluster_identify.request.await_count == called
+        if called:
+            assert cluster_identify.request.call_args == mock.call(
+                False,
+                64,
+                (zigpy.types.uint8_t, zigpy.types.uint8_t),
+                2,
+                0,
+                expect_reply=True,
+                manufacturer=None,
+                tsn=None,
+            )
+
     event_channels = {
-        ch.id for pool in zha_dev.channels.pools for ch in pool.relay_channels.values()
+        ch.id for pool in zha_dev.channels.pools for ch in pool.client_channels.values()
     }
 
     entity_map = device["entity_map"]
-    assert zha_entity_ids == set(
-        [
-            e["entity_id"]
-            for e in entity_map.values()
-            if not e.get("default_match", False)
-        ]
-    )
+    assert zha_entity_ids == {
+        e["entity_id"] for e in entity_map.values() if not e.get("default_match", False)
+    }
     assert event_channels == set(device["event_channels"])
 
     for call in _dispatch.call_args_list:
@@ -104,8 +128,14 @@ async def test_devices(
         assert entity_id is not None
         no_tail_id = NO_TAIL_ID.sub("", entity_map[key]["entity_id"])
         assert entity_id.startswith(no_tail_id)
-        assert set([ch.name for ch in channels]) == set(entity_map[key]["channels"])
+        assert {ch.name for ch in channels} == set(entity_map[key]["channels"])
         assert entity_cls.__name__ == entity_map[key]["entity_class"]
+
+
+def _get_first_identify_cluster(zigpy_device):
+    for endpoint in list(zigpy_device.endpoints.values())[1:]:
+        if hasattr(endpoint, "identify"):
+            return endpoint.identify
 
 
 @mock.patch(
@@ -231,7 +261,7 @@ async def test_discover_endpoint(device_info, channels_mock, hass):
         )
 
     assert device_info["event_channels"] == sorted(
-        [ch.id for pool in channels.pools for ch in pool.relay_channels.values()]
+        [ch.id for pool in channels.pools for ch in pool.client_channels.values()]
     )
     assert new_ent.call_count == len(
         [
@@ -246,7 +276,7 @@ async def test_discover_endpoint(device_info, channels_mock, hass):
         map_id = (comp, unique_id)
         assert map_id in device_info["entity_map"]
         entity_info = device_info["entity_map"][map_id]
-        assert set([ch.name for ch in channels]) == set(entity_info["channels"])
+        assert {ch.name for ch in channels} == set(entity_info["channels"])
         assert ent_cls.__name__ == entity_info["entity_class"]
 
 
@@ -361,3 +391,12 @@ async def test_device_override(hass, zigpy_device_mock, setup_zha, override, ent
     await zha_gateway.async_device_initialized(zigpy_device)
     await hass.async_block_till_done()
     assert hass.states.get(entity_id) is not None
+
+
+async def test_group_probe_cleanup_called(hass, setup_zha, config_entry):
+    """Test cleanup happens when zha is unloaded."""
+    await setup_zha()
+    disc.GROUP_PROBE.cleanup = mock.Mock(wraps=disc.GROUP_PROBE.cleanup)
+    await config_entry.async_unload(hass)
+    await hass.async_block_till_done()
+    disc.GROUP_PROBE.cleanup.assert_called()

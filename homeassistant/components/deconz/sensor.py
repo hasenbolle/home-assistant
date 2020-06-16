@@ -3,13 +3,30 @@ from pydeconz.sensor import (
     Battery,
     Consumption,
     Daylight,
+    Humidity,
     LightLevel,
     Power,
+    Pressure,
     Switch,
+    Temperature,
     Thermostat,
 )
 
-from homeassistant.const import ATTR_TEMPERATURE, ATTR_VOLTAGE, DEVICE_CLASS_BATTERY
+from homeassistant.const import (
+    ATTR_TEMPERATURE,
+    ATTR_VOLTAGE,
+    DEVICE_CLASS_BATTERY,
+    DEVICE_CLASS_HUMIDITY,
+    DEVICE_CLASS_ILLUMINANCE,
+    DEVICE_CLASS_POWER,
+    DEVICE_CLASS_PRESSURE,
+    DEVICE_CLASS_TEMPERATURE,
+    ENERGY_KILO_WATT_HOUR,
+    POWER_WATT,
+    PRESSURE_HPA,
+    TEMP_CELSIUS,
+    UNIT_PERCENTAGE,
+)
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
@@ -25,6 +42,29 @@ ATTR_CURRENT = "current"
 ATTR_POWER = "power"
 ATTR_DAYLIGHT = "daylight"
 ATTR_EVENT_ID = "event_id"
+
+DEVICE_CLASS = {
+    Humidity: DEVICE_CLASS_HUMIDITY,
+    LightLevel: DEVICE_CLASS_ILLUMINANCE,
+    Power: DEVICE_CLASS_POWER,
+    Pressure: DEVICE_CLASS_PRESSURE,
+    Temperature: DEVICE_CLASS_TEMPERATURE,
+}
+
+ICON = {
+    Daylight: "mdi:white-balance-sunny",
+    Pressure: "mdi:gauge",
+    Temperature: "mdi:thermometer",
+}
+
+UNIT_OF_MEASUREMENT = {
+    Consumption: ENERGY_KILO_WATT_HOUR,
+    Humidity: UNIT_PERCENTAGE,
+    LightLevel: "lx",
+    Power: POWER_WATT,
+    Pressure: PRESSURE_HPA,
+    Temperature: TEMP_CELSIUS,
+}
 
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
@@ -68,7 +108,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     gateway.option_allow_clip_sensor
                     or not sensor.type.startswith("CLIP")
                 )
-                and sensor.deconz_id not in gateway.deconz_ids.values()
             ):
                 entities.append(DeconzSensor(sensor, gateway))
 
@@ -105,7 +144,7 @@ class DeconzSensor(DeconzDevice):
 
         keys = {"on", "reachable", "state"}
         if force_update or self._device.changed_keys.intersection(keys):
-            self.async_schedule_update_ha_state()
+            self.async_write_ha_state()
 
     @property
     def state(self):
@@ -115,17 +154,17 @@ class DeconzSensor(DeconzDevice):
     @property
     def device_class(self):
         """Return the class of the sensor."""
-        return self._device.SENSOR_CLASS
+        return DEVICE_CLASS.get(type(self._device))
 
     @property
     def icon(self):
         """Return the icon to use in the frontend."""
-        return self._device.SENSOR_ICON
+        return ICON.get(type(self._device))
 
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement of this sensor."""
-        return self._device.SENSOR_UNIT
+        return UNIT_OF_MEASUREMENT.get(type(self._device))
 
     @property
     def device_state_attributes(self):
@@ -170,7 +209,7 @@ class DeconzBattery(DeconzDevice):
 
         keys = {"battery", "reachable"}
         if force_update or self._device.changed_keys.intersection(keys):
-            self.async_schedule_update_ha_state()
+            self.async_write_ha_state()
 
     @property
     def unique_id(self):
@@ -195,7 +234,7 @@ class DeconzBattery(DeconzDevice):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement of this entity."""
-        return "%"
+        return UNIT_PERCENTAGE
 
     @property
     def device_state_attributes(self):
