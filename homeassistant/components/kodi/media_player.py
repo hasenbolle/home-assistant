@@ -337,6 +337,8 @@ class KodiDevice(MediaPlayerEntity):
         self._properties = {}
         self._item = {}
         self._app_properties = {}
+        self._force_refresh = False
+        self._ws_connecting = False
 
     @callback
     def async_on_speed_event(self, sender, data):
@@ -345,12 +347,12 @@ class KodiDevice(MediaPlayerEntity):
 
         if not hasattr(data["item"], "id"):
             # If no item id is given, perform a full update
-            force_refresh = True
+            self._force_refresh = True
         else:
             # If a new item is playing, force a complete refresh
-            force_refresh = data["item"]["id"] != self._item.get("id")
+            self._force_refresh = data["item"]["id"] != self._item.get("id")
 
-        self.async_schedule_update_ha_state(force_refresh)
+        self.async_schedule_update_ha_state(self._force_refresh)
 
     @callback
     def async_on_stop(self, sender, data):
@@ -376,11 +378,15 @@ class KodiDevice(MediaPlayerEntity):
     @callback
     def async_on_quit(self, sender, data):
         """Reset the player state on quit action."""
+        self.reset_player()
+        self.hass.async_create_task(self._ws_server.close())
+
+    def reset_player(self):
+        """Reset the player state."""
         self._players = None
         self._properties = {}
         self._item = {}
         self._app_properties = {}
-        self.hass.async_create_task(self._ws_server.close())
 
     async def _get_players(self):
         """Return the active player objects or None."""
@@ -415,9 +421,12 @@ class KodiDevice(MediaPlayerEntity):
         """Connect to Kodi via websocket protocol."""
         try:
             ws_loop_future = await self._ws_server.ws_connect()
+            _LOGGER.info("Kodi Websocket connected")
         except jsonrpc_base.jsonrpc.TransportError:
-            _LOGGER.info("Unable to connect to Kodi via websocket")
-            _LOGGER.debug("Unable to connect to Kodi via websocket", exc_info=True)
+            self.reset_player()
+            await self._ws_server.close()
+            _LOGGER.info("Connection to Kodi websocket lost")
+            # _LOGGER.debug("Connection to Kodi websocket lost", exc_info=True)
             return
 
         async def ws_loop_wrapper():
@@ -435,60 +444,108 @@ class KodiDevice(MediaPlayerEntity):
         # run until the websocket connection is closed.
         self.hass.loop.create_task(ws_loop_wrapper())
 
+    async def async_ws_ping(self):
+        """Ping webscocket"""
+        if self._enable_websocket:
+            if self._ws_server.connected:
+                ws_error = False
+
+                try:
+                    res = await self._ws_server.JSONRPC.Ping()
+                    _LOGGER.debug("Sending Ping. Pong!")
+                    if res != "pong":
+                        ws_error = True
+                except jsonrpc_base.jsonrpc.TransportError:
+                    ws_error = True
+
+                if ws_error:
+                    _LOGGER.debug("Sending Ping. Error!")
+                    _LOGGER.warning("Websocket connection failed! Dropping it")
+                    self.reset_player()
+                    await self._ws_server.close()
+
+    async def async_ws_connect_if_needed(self):
+        """Connect if needed"""
+
+        # Ping kodi to check if the connection is broken
+        # If broken, websocket connection is closed
+        await self.async_ws_ping()
+
+        # Dont run connect, if:
+        # Websockets disabled
+        # Websocket not connected
+        # Websocket is not right now connecting
+        if (
+            self._enable_websocket
+            and not self._ws_server.connected
+            and not self._ws_connecting
+        ):
+
+            def on_complete(task):
+                self._ws_connecting = False
+                if self._ws_server.connected:
+                    self._force_refresh = True
+
+            _LOGGER.debug("Try connect to Kodi websocket - shedule async_ws_connect")
+            self._ws_connecting = True
+            connect_future = self.hass.async_create_task(self.async_ws_connect())
+            # Add done callback to reset the connecting flag
+            connect_future.add_done_callback(on_complete)
+
     async def async_update(self):
         """Retrieve latest state."""
-        self._players = await self._get_players()
+        await self.async_ws_connect_if_needed()
 
-        if self._players is None:
-            self._properties = {}
-            self._item = {}
-            self._app_properties = {}
-            return
+        if self._force_refresh:
+            _LOGGER.debug("Force refresh players")
+            self._force_refresh = False
+            self._players = await self._get_players()
 
-        if self._enable_websocket and not self._ws_server.connected:
-            self.hass.async_create_task(self.async_ws_connect())
+            if self._players is None:
+                self.reset_player()
+                return
 
-        self._app_properties = await self.server.Application.GetProperties(
-            ["volume", "muted"]
-        )
-
-        if self._players:
-            player_id = self._players[0]["playerid"]
-
-            assert isinstance(player_id, int)
-
-            self._properties = await self.server.Player.GetProperties(
-                player_id, ["time", "totaltime", "speed", "live"]
+            self._app_properties = await self.server.Application.GetProperties(
+                ["volume", "muted"]
             )
 
-            position = self._properties["time"]
-            if self._media_position != position:
-                self._media_position_updated_at = dt_util.utcnow()
-                self._media_position = position
+            if self._players:
+                player_id = self._players[0]["playerid"]
 
-            self._item = (
-                await self.server.Player.GetItem(
-                    player_id,
-                    [
-                        "title",
-                        "file",
-                        "uniqueid",
-                        "thumbnail",
-                        "artist",
-                        "albumartist",
-                        "showtitle",
-                        "album",
-                        "season",
-                        "episode",
-                    ],
+                assert isinstance(player_id, int)
+
+                self._properties = await self.server.Player.GetProperties(
+                    player_id, ["time", "totaltime", "speed", "live"]
                 )
-            )["item"]
-        else:
-            self._properties = {}
-            self._item = {}
-            self._app_properties = {}
-            self._media_position = None
-            self._media_position_updated_at = None
+
+                position = self._properties["time"]
+                if self._media_position != position:
+                    self._media_position_updated_at = dt_util.utcnow()
+                    self._media_position = position
+
+                self._item = (
+                    await self.server.Player.GetItem(
+                        player_id,
+                        [
+                            "title",
+                            "file",
+                            "uniqueid",
+                            "thumbnail",
+                            "artist",
+                            "albumartist",
+                            "showtitle",
+                            "album",
+                            "season",
+                            "episode",
+                        ],
+                    )
+                )["item"]
+            else:
+                self._properties = {}
+                self._item = {}
+                self._app_properties = {}
+                self._media_position = None
+                self._media_position_updated_at = None
 
     @property
     def server(self):
@@ -506,7 +563,7 @@ class KodiDevice(MediaPlayerEntity):
     @property
     def should_poll(self):
         """Return True if entity has to be polled for state."""
-        return not (self._enable_websocket and self._ws_server.connected)
+        return True
 
     @property
     def volume_level(self):
