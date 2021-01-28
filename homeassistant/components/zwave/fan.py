@@ -1,5 +1,4 @@
 """Support for Z-Wave fans."""
-import logging
 import math
 
 from homeassistant.components.fan import (
@@ -15,8 +14,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from . import ZWaveDeviceEntity
-
-_LOGGER = logging.getLogger(__name__)
 
 SPEED_LIST = [SPEED_OFF, SPEED_LOW, SPEED_MEDIUM, SPEED_HIGH]
 
@@ -61,7 +58,14 @@ class ZwaveFan(ZWaveDeviceEntity, FanEntity):
         """Set the speed of the fan."""
         self.node.set_dimmer(self.values.primary.value_id, SPEED_TO_VALUE[speed])
 
-    def turn_on(self, speed=None, **kwargs):
+    #
+    # The fan entity model has changed to use percentages and preset_modes
+    # instead of speeds.
+    #
+    # Please review
+    # https://developers.home-assistant.io/docs/core/entity/fan/
+    #
+    def turn_on(self, speed=None, percentage=None, preset_mode=None, **kwargs):
         """Turn the device on."""
         if speed is None:
             # Value 255 tells device to return to previous value

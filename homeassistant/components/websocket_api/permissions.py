@@ -3,7 +3,7 @@
 Separate file to avoid circular imports.
 """
 from homeassistant.components.frontend import EVENT_PANELS_UPDATED
-from homeassistant.components.lovelace import EVENT_LOVELACE_UPDATED
+from homeassistant.components.lovelace.const import EVENT_LOVELACE_UPDATED
 from homeassistant.components.persistent_notification import (
     EVENT_PERSISTENT_NOTIFICATIONS_UPDATED,
 )
@@ -22,7 +22,7 @@ from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 
 # These are events that do not contain any sensitive data
 # Except for state_changed, which is handled accordingly.
-SUBSCRIBE_WHITELIST = {
+SUBSCRIBE_ALLOWLIST = {
     EVENT_AREA_REGISTRY_UPDATED,
     EVENT_COMPONENT_LOADED,
     EVENT_CORE_CONFIG_UPDATE,

@@ -48,9 +48,22 @@ class SmartThingsFan(SmartThingsEntity, FanEntity):
         await self._device.set_fan_speed(value, set_status=True)
         # State is set optimistically in the command above, therefore update
         # the entity state ahead of receiving the confirming push updates
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
-    async def async_turn_on(self, speed: str = None, **kwargs) -> None:
+    #
+    # The fan entity model has changed to use percentages and preset_modes
+    # instead of speeds.
+    #
+    # Please review
+    # https://developers.home-assistant.io/docs/core/entity/fan/
+    #
+    async def async_turn_on(
+        self,
+        speed: str = None,
+        percentage: int = None,
+        preset_mode: str = None,
+        **kwargs,
+    ) -> None:
         """Turn the fan on."""
         if speed is not None:
             value = SPEED_TO_VALUE[speed]
@@ -59,14 +72,14 @@ class SmartThingsFan(SmartThingsEntity, FanEntity):
             await self._device.switch_on(set_status=True)
         # State is set optimistically in the commands above, therefore update
         # the entity state ahead of receiving the confirming push updates
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the fan off."""
         await self._device.switch_off(set_status=True)
         # State is set optimistically in the command above, therefore update
         # the entity state ahead of receiving the confirming push updates
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
     @property
     def is_on(self) -> bool:

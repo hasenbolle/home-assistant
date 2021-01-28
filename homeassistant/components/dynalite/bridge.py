@@ -1,118 +1,119 @@
 """Code to handle a Dynalite bridge."""
 
-from dynalite_devices_lib import DynaliteDevices
-from dynalite_lib import CONF_ALL
+from typing import Any, Callable, Dict, List, Optional
+
+from dynalite_devices_lib.dynalite_devices import (
+    CONF_AREA as dyn_CONF_AREA,
+    CONF_PRESET as dyn_CONF_PRESET,
+    NOTIFICATION_PACKET,
+    NOTIFICATION_PRESET,
+    DynaliteBaseDevice,
+    DynaliteDevices,
+    DynaliteNotification,
+)
 
 from homeassistant.const import CONF_HOST
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import DATA_CONFIGS, DOMAIN, LOGGER
-from .light import DynaliteLight
-
-
-class BridgeError(Exception):
-    """Class to throw exceptions from DynaliteBridge."""
-
-    def __init__(self, message):
-        """Initialize the exception."""
-        super().__init__()
-        self.message = message
+from .const import (
+    ATTR_AREA,
+    ATTR_HOST,
+    ATTR_PACKET,
+    ATTR_PRESET,
+    ENTITY_PLATFORMS,
+    LOGGER,
+)
+from .convert_config import convert_config
 
 
 class DynaliteBridge:
     """Manages a single Dynalite bridge."""
 
-    def __init__(self, hass, config_entry):
+    def __init__(self, hass: HomeAssistant, config: Dict[str, Any]) -> None:
         """Initialize the system based on host parameter."""
-        self.config_entry = config_entry
         self.hass = hass
         self.area = {}
-        self.async_add_entities = None
-        self.waiting_entities = []
-        self.all_entities = {}
-        self.config = None
-        self.host = config_entry.data[CONF_HOST]
-        if self.host not in hass.data[DOMAIN][DATA_CONFIGS]:
-            LOGGER.info("invalid host - %s", self.host)
-            raise BridgeError(f"invalid host - {self.host}")
-        self.config = hass.data[DOMAIN][DATA_CONFIGS][self.host]
+        self.async_add_devices = {}
+        self.waiting_devices = {}
+        self.host = config[CONF_HOST]
         # Configure the dynalite devices
         self.dynalite_devices = DynaliteDevices(
-            config=self.config,
-            newDeviceFunc=self.add_devices,
-            updateDeviceFunc=self.update_device,
+            new_device_func=self.add_devices_when_registered,
+            update_device_func=self.update_device,
+            notification_func=self.handle_notification,
         )
+        self.dynalite_devices.configure(convert_config(config))
 
-    async def async_setup(self, tries=0):
+    async def async_setup(self) -> bool:
         """Set up a Dynalite bridge."""
         # Configure the dynalite devices
-        await self.dynalite_devices.async_setup()
+        LOGGER.debug("Setting up bridge - host %s", self.host)
+        return await self.dynalite_devices.async_setup()
 
-        self.hass.async_create_task(
-            self.hass.config_entries.async_forward_entry_setup(
-                self.config_entry, "light"
-            )
-        )
+    def reload_config(self, config: Dict[str, Any]) -> None:
+        """Reconfigure a bridge when config changes."""
+        LOGGER.debug("Reloading bridge - host %s, config %s", self.host, config)
+        self.dynalite_devices.configure(convert_config(config))
 
-        return True
-
-    @callback
-    def add_devices(self, devices):
-        """Call when devices should be added to home assistant."""
-        added_entities = []
-
-        for device in devices:
-            if device.category == "light":
-                entity = DynaliteLight(device, self)
-            else:
-                LOGGER.debug("Illegal device category %s", device.category)
-                continue
-            added_entities.append(entity)
-            self.all_entities[entity.unique_id] = entity
-
-        if added_entities:
-            self.add_entities_when_registered(added_entities)
-
-    @callback
-    def update_device(self, device):
-        """Call when a device or all devices should be updated."""
-        if device == CONF_ALL:
-            # This is used to signal connection or disconnection, so all devices may become available or not.
-            if self.dynalite_devices.available:
-                LOGGER.info("Connected to dynalite host")
-            else:
-                LOGGER.info("Disconnected from dynalite host")
-            for uid in self.all_entities:
-                self.all_entities[uid].try_schedule_ha()
+    def update_signal(self, device: Optional[DynaliteBaseDevice] = None) -> str:
+        """Create signal to use to trigger entity update."""
+        if device:
+            signal = f"dynalite-update-{self.host}-{device.unique_id}"
         else:
-            uid = device.unique_id
-            if uid in self.all_entities:
-                self.all_entities[uid].try_schedule_ha()
+            signal = f"dynalite-update-{self.host}"
+        return signal
 
     @callback
-    def register_add_entities(self, async_add_entities):
+    def update_device(self, device: Optional[DynaliteBaseDevice] = None) -> None:
+        """Call when a device or all devices should be updated."""
+        if not device:
+            # This is used to signal connection or disconnection, so all devices may become available or not.
+            log_string = (
+                "Connected" if self.dynalite_devices.connected else "Disconnected"
+            )
+            LOGGER.info("%s to dynalite host", log_string)
+            async_dispatcher_send(self.hass, self.update_signal())
+        else:
+            async_dispatcher_send(self.hass, self.update_signal(device))
+
+    @callback
+    def handle_notification(self, notification: DynaliteNotification) -> None:
+        """Handle a notification from the platform and issue events."""
+        if notification.notification == NOTIFICATION_PACKET:
+            self.hass.bus.async_fire(
+                "dynalite_packet",
+                {
+                    ATTR_HOST: self.host,
+                    ATTR_PACKET: notification.data[NOTIFICATION_PACKET],
+                },
+            )
+        if notification.notification == NOTIFICATION_PRESET:
+            self.hass.bus.async_fire(
+                "dynalite_preset",
+                {
+                    ATTR_HOST: self.host,
+                    ATTR_AREA: notification.data[dyn_CONF_AREA],
+                    ATTR_PRESET: notification.data[dyn_CONF_PRESET],
+                },
+            )
+
+    @callback
+    def register_add_devices(self, platform: str, async_add_devices: Callable) -> None:
         """Add an async_add_entities for a category."""
-        self.async_add_entities = async_add_entities
-        if self.waiting_entities:
-            self.async_add_entities(self.waiting_entities)
+        self.async_add_devices[platform] = async_add_devices
+        if platform in self.waiting_devices:
+            self.async_add_devices[platform](self.waiting_devices[platform])
 
-    def add_entities_when_registered(self, entities):
-        """Add the entities to HA if async_add_entities was registered, otherwise queue until it is."""
-        if not entities:
-            return
-        if self.async_add_entities:
-            self.async_add_entities(entities)
-        else:  # handle it later when it is registered
-            self.waiting_entities.extend(entities)
-
-    async def async_reset(self):
-        """Reset this bridge to default state.
-
-        Will cancel any scheduled setup retry and will unload
-        the config entry.
-        """
-        result = await self.hass.config_entries.async_forward_entry_unload(
-            self.config_entry, "light"
-        )
-        # None and True are OK
-        return result
+    def add_devices_when_registered(self, devices: List[DynaliteBaseDevice]) -> None:
+        """Add the devices to HA if the add devices callback was registered, otherwise queue until it is."""
+        for platform in ENTITY_PLATFORMS:
+            platform_devices = [
+                device for device in devices if device.category == platform
+            ]
+            if platform in self.async_add_devices:
+                self.async_add_devices[platform](platform_devices)
+            else:  # handle it later when it is registered
+                if platform not in self.waiting_devices:
+                    self.waiting_devices[platform] = []
+                self.waiting_devices[platform].extend(platform_devices)

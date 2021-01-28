@@ -1,5 +1,6 @@
 """Test Mikrotik hub."""
-from asynctest import patch
+from unittest.mock import patch
+
 import librouteros
 
 from homeassistant import config_entries
@@ -33,10 +34,10 @@ async def setup_mikrotik_entry(hass, **kwargs):
     config_entry.add_to_hass(hass)
 
     if "force_dhcp" in kwargs:
-        config_entry.options["force_dhcp"] = True
+        config_entry.options = {**config_entry.options, "force_dhcp": True}
 
     if "arp_ping" in kwargs:
-        config_entry.options["arp_ping"] = True
+        config_entry.options = {**config_entry.options, "arp_ping": True}
 
     with patch("librouteros.connect"), patch.object(
         mikrotik.hub.MikrotikData, "command", new=mock_command

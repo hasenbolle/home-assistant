@@ -44,10 +44,12 @@ class ComfoConnectFan(FanEntity):
     async def async_added_to_hass(self):
         """Register for sensor updates."""
         _LOGGER.debug("Registering for fan speed")
-        async_dispatcher_connect(
-            self.hass,
-            SIGNAL_COMFOCONNECT_UPDATE_RECEIVED.format(SENSOR_FAN_SPEED_MODE),
-            self._handle_update,
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_COMFOCONNECT_UPDATE_RECEIVED.format(SENSOR_FAN_SPEED_MODE),
+                self._handle_update,
+            )
         )
         await self.hass.async_add_executor_job(
             self._ccb.comfoconnect.register_sensor, SENSOR_FAN_SPEED_MODE
@@ -100,7 +102,16 @@ class ComfoConnectFan(FanEntity):
         """List of available fan modes."""
         return [SPEED_OFF, SPEED_LOW, SPEED_MEDIUM, SPEED_HIGH]
 
-    def turn_on(self, speed: str = None, **kwargs) -> None:
+    #
+    # The fan entity model has changed to use percentages and preset_modes
+    # instead of speeds.
+    #
+    # Please review
+    # https://developers.home-assistant.io/docs/core/entity/fan/
+    #
+    def turn_on(
+        self, speed: str = None, percentage=None, preset_mode=None, **kwargs
+    ) -> None:
         """Turn on the fan."""
         if speed is None:
             speed = SPEED_LOW

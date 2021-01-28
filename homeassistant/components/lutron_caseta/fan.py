@@ -13,7 +13,8 @@ from homeassistant.components.fan import (
     FanEntity,
 )
 
-from . import LUTRON_CASETA_SMARTBRIDGE, LutronCasetaDevice
+from . import LutronCasetaDevice
+from .const import BRIDGE_DEVICE, BRIDGE_LEAP, DOMAIN as CASETA_DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,14 +37,21 @@ SPEED_TO_VALUE = {
 FAN_SPEEDS = [SPEED_OFF, SPEED_LOW, SPEED_MEDIUM, SPEED_HIGH]
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Set up Lutron fan."""
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Set up the Lutron Caseta fan platform.
+
+    Adds fan controllers from the Caseta bridge associated with the config_entry
+    as fan entities.
+    """
+
     entities = []
-    bridge = hass.data[LUTRON_CASETA_SMARTBRIDGE]
+    data = hass.data[CASETA_DOMAIN][config_entry.entry_id]
+    bridge = data[BRIDGE_LEAP]
+    bridge_device = data[BRIDGE_DEVICE]
     fan_devices = bridge.get_devices_by_domain(DOMAIN)
 
     for fan_device in fan_devices:
-        entity = LutronCasetaFan(fan_device, bridge)
+        entity = LutronCasetaFan(fan_device, bridge, bridge_device)
         entities.append(entity)
 
     async_add_entities(entities, True)
@@ -67,7 +75,20 @@ class LutronCasetaFan(LutronCasetaDevice, FanEntity):
         """Flag supported features. Speed Only."""
         return SUPPORT_SET_SPEED
 
-    async def async_turn_on(self, speed: str = None, **kwargs):
+    #
+    # The fan entity model has changed to use percentages and preset_modes
+    # instead of speeds.
+    #
+    # Please review
+    # https://developers.home-assistant.io/docs/core/entity/fan/
+    #
+    async def async_turn_on(
+        self,
+        speed: str = None,
+        percentage: int = None,
+        preset_mode: str = None,
+        **kwargs,
+    ):
         """Turn the fan on."""
         if speed is None:
             speed = SPEED_MEDIUM
@@ -79,7 +100,7 @@ class LutronCasetaFan(LutronCasetaDevice, FanEntity):
 
     async def async_set_speed(self, speed: str) -> None:
         """Set the speed of the fan."""
-        self._smartbridge.set_fan(self.device_id, SPEED_TO_VALUE[speed])
+        await self._smartbridge.set_fan(self.device_id, SPEED_TO_VALUE[speed])
 
     @property
     def is_on(self):
